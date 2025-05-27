@@ -48,11 +48,11 @@ function arcModel() {
         # Check id model is compatible with CPU
         if [ "${RESTRICT}" -eq 1 ]; then
           for F in ${FLAGS}; do
-            if ! grep -q "^flags.*${F}.*" /proc/cpuinfo; then
+            if ! (grep -q "^flags.*${F}.*" /proc/cpuinfo); then
               COMPATIBLE=0
             fi
           done
-          if ! is_in_array "${A}" "${KVER5L[@]}" && { 
+          if ! (is_in_array "${A}" "${KVER5L[@]}") && { 
               ([ "${DT}" = "true" ] && [ "${EXTERNALCONTROLLER}" = "true" ]) || 
               ([ "${SATACONTROLLER}" -eq 0 ] && [ "${EXTERNALCONTROLLER}" = "false" ]) || 
               ([ "${NVMEDRIVES}" -gt 0 ] && [ "${BUS}" = "usb" ] && [ "${SATADRIVES}" -eq 0 ] && [ "${EXTERNALCONTROLLER}" = "false" ]) || 
@@ -255,7 +255,7 @@ function arcVersion() {
           initConfigKey "addons.nvmecache" "" "${USER_CONFIG_FILE}"
         fi
       fi
-      if [ "${MACHINE}" = "physical" ]; then
+      if [ "${MEV}" = "physical" ]; then
         initConfigKey "addons.cpufreqscaling" "" "${USER_CONFIG_FILE}"
         initConfigKey "addons.powersched" "" "${USER_CONFIG_FILE}"
         if [ "$(find "/sys/devices/platform/" -name "temp1_input" | grep -E 'coretemp|k10temp' | sed -n 's|.*/\(hwmon.*\/temp1_input\).*|\1|p' | wc -l)" -gt 0 ]; then
@@ -279,7 +279,7 @@ function arcVersion() {
     fi
     while IFS=': ' read -r ADDON PARAM; do
       [ -z "${ADDON}" ] && continue
-      if ! checkAddonExist "${ADDON}" "${PLATFORM}"; then
+      if ! (checkAddonExist "${ADDON}" "${PLATFORM}"); then
         deleteConfigKey "addons.\"${ADDON}\"" "${USER_CONFIG_FILE}"
       fi
     done < <(readConfigMap "addons" "${USER_CONFIG_FILE}")
@@ -404,11 +404,11 @@ function arcSettings() {
   
   # CPU Frequency Scaling & Governor
   if readConfigMap "addons" "${USER_CONFIG_FILE}" | grep -q "cpufreqscaling"; then
-    if [ "${ARC_MODE}" = "config" ] && [ "${MACHINE}" = "physical" ]; then
+    if [ "${ARC_MODE}" = "config" ] && [ "${MEV}" = "physical" ]; then
       dialog --backtitle "$(backtitle)" --colors --title "CPU Frequency Scaling" \
         --infobox "Generating Governor Table..." 3 40
       governorSelection || return
-    elif [ "${ARC_MODE}" = "automated" ] && [ "${MACHINE}" = "physical" ]; then
+    elif [ "${ARC_MODE}" = "automated" ] && [ "${MEV}" = "physical" ]; then
       if [ "${KVER:0:1}" = "5" ]; then
         writeConfigKey "governor" "schedutil" "${USER_CONFIG_FILE}"
       else
@@ -416,7 +416,11 @@ function arcSettings() {
       fi
     fi
   fi
-  
+
+  if readConfigMap "addons" "${USER_CONFIG_FILE}" | grep -q fancontrol && ! (readConfigMap "addons" "${USER_CONFIG_FILE}" | grep -q sensors); then
+      writeConfigKey "addons.sensors" "" "${USER_CONFIG_FILE}"
+  fi
+
   # Warnings and Checks
   if [ "${ARC_MODE}" = "config" ]; then
     [ "${DT}" = "true" ] && [ "${EXTERNALCONTROLLER}" = "true" ] && dialog --backtitle "$(backtitle)" --title "Arc Warning" --msgbox "WARN: You use a HBA/Raid Controller and selected a DT Model.\nThis is still an experimental." 6 70
@@ -605,8 +609,7 @@ function make() {
 # Finish Building Loader
 function arcFinish() {
   MODELID="$(readConfigKey "modelid" "${USER_CONFIG_FILE}")"
-  
-  if [ -n "${MODELID}" ]; then
+  if [ -n "${MODELID}" ] && [ "${MODELID}" = "${MODEL}" ]; then
     writeConfigKey "arc.builddone" "true" "${USER_CONFIG_FILE}"
     BUILDDONE="$(readConfigKey "arc.builddone" "${USER_CONFIG_FILE}")"
   
@@ -836,7 +839,7 @@ function modulesMenu() {
       BUILDDONE="$(readConfigKey "arc.builddone" "${USER_CONFIG_FILE}")"
       ;;
     3)
-      if ! tty 2>/dev/null | grep -q "/dev/pts"; then #if ! tty 2>/dev/null | grep -q "/dev/pts" || [ -z "${SSH_TTY}" ]; then
+      if ! (tty 2>/dev/null | grep -q "/dev/pts"); then
         MSG=""
         MSG+="This feature is only available when accessed via ssh (Requires a terminal that supports ZModem protocol)."
         dialog --backtitle "$(backtitle)" --title "Modules" \
@@ -1645,7 +1648,7 @@ function sysinfo() {
   PATCHESVERSION="$(cat "${PATCH_PATH}/VERSION")"
   TIMEOUT=5
   # Print System Informations
-  TEXT="\n\Z4> System: ${MACHINE} | ${BOOTSYS} | ${BUS}\Zn"
+  TEXT="\n\Z4> System: ${MEV} | ${BOOTSYS} | ${BUS}\Zn"
   TEXT+="\n  Vendor: \Zb${VENDOR}\Zn"
   TEXT+="\n  CPU: \Zb${CPU}\Zn"
   if [ $(lspci -d ::300 | wc -l) -gt 0 ]; then
@@ -2958,7 +2961,7 @@ function dtsMenu() {
     [ $? -ne 0 ] && break
     case "$(cat "${TMP_PATH}/resp" 2>/dev/null)" in
     1)
-      if ! tty 2>/dev/null | grep -q "/dev/pts"; then #if ! tty 2>/dev/null | grep -q "/dev/pts" || [ -z "${SSH_TTY}" ]; then
+      if ! (tty 2>/dev/null | grep -q "/dev/pts"); then
         MSG=""
         MSG+="This feature is only available when accessed via ssh (Requires a terminal that supports ZModem protocol)\n"
         MSG+="or upload the dts file to ${USER_UP_PATH}/model.dts via Webfilemananger, will be automatically imported at building."
@@ -3354,7 +3357,7 @@ function getmap() {
   if [ $(lspci -d ::106 2>/dev/null | wc -l) -gt 0 ]; then
     LASTDRIVE=0
     while read -r D; do
-      if [ "${BUS}" = "sata" ] && [ "${MACHINE}" != "physical" ] && [ "${D}" -eq 0 ]; then
+      if [ "${BUS}" = "sata" ] && [ "${MEV}" != "physical" ] && [ "${D}" -eq 0 ]; then
         MAXDISKS=${DRIVES}
         echo -n "${D}>${MAXDISKS}:" >>"${TMP_PATH}/remap"
       elif [ "${D}" -ne "${LASTDRIVE}" ]; then
@@ -3399,7 +3402,7 @@ function getmapSelection() {
   
   if [ "${ARC_MODE}" = "config" ]; then
     # Show recommended Option to user
-    if [ -n "${SATAREMAP}" ] && [ "${EXTERNALCONTROLLER}" = "true" ] && [ "${MACHINE}" = "physical" ]; then
+    if [ -n "${SATAREMAP}" ] && [ "${EXTERNALCONTROLLER}" = "true" ] && [ "${MEV}" = "physical" ]; then
       REMAP2="*"
     elif [ -n "${SATAREMAP}" ] && [ "${EXTERNALCONTROLLER}" = "false" ]; then
       REMAP3="*"
@@ -3409,7 +3412,7 @@ function getmapSelection() {
     show_and_set_remap
   else
     # Show recommended Option to user
-    if [ -n "${SATAREMAP}" ] && [ "${EXTERNALCONTROLLER}" = "true" ] && [ "${MACHINE}" = "physical" ]; then
+    if [ -n "${SATAREMAP}" ] && [ "${EXTERNALCONTROLLER}" = "true" ] && [ "${MEV}" = "physical" ]; then
       writeConfigKey "arc.remap" "maxports" "${USER_CONFIG_FILE}"
     elif [ -n "${SATAREMAP}" ] && [ "${EXTERNALCONTROLLER}" = "false" ]; then
       writeConfigKey "arc.remap" "remap" "${USER_CONFIG_FILE}"
